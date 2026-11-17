@@ -106,34 +106,62 @@ The flags are optional and can be combined. A resume must match all of them to b
 
 `analyzer/` turns raw resume text into typed data.
 
-- `analyzer/schemas.py` holds the data classes and nothing else, so any group can import them and build test objects by hand:
-  ```python
-  from analyzer import Education, Experience, ResumeProfile
+### The data classes
+`analyzer/schemas.py` holds the data classes and nothing else, so any group can import them and build test objects by hand:
+```python
+from analyzer import Education, Experience, ResumeProfile
 
-  profile = ResumeProfile(
-      skills=["Python", "SQL"],
-      experience=[Experience(title="Intern", organization="Acme")],
-      education=[Education(degree="B.S.", field_of_study="Computer Science")],
-  )
-  ```
-  | Class | Fields |
-  | --- | --- |
-  | `ResumeProfile` | `skills: list[str]`, `experience: list[Experience]`, `education: list[Education]` |
-  | `Experience` | `title: str`, then optional `organization`, `start`, `end`, `description` |
-  | `Education` | `degree: str`, then optional `field_of_study`, `institution`, `year` |
+profile = ResumeProfile(
+    skills=["Python", "SQL"],
+    experience=[Experience(title="Intern", organization="Acme")],
+    education=[Education(degree="B.S.", field_of_study="Computer Science")],
+)
+```
 
-  Optional fields are `None` when the resume does not state them. Dates are kept as written (`"May 2021"`, `"Present"`). Skills are trimmed and de-duplicated ignoring case. `profile.missing_sections()` lists the sections that came back empty.
+| `ResumeProfile` field | Type | What it holds |
+| --- | --- | --- |
+| `skills` | `list[str]` | Skills, tools, and technologies, one per item |
+| `skill_experience` | `list[SkillExperience]` | How long a skill has been used, where the resume says so: `skill`, `duration` |
+| `experience` | `list[Experience]` | Jobs and internships: `title`, `organization`, `start`, `end`, `description` |
+| `projects` | `list[Project]` | Named projects, kept apart from jobs: `name`, `description` |
+| `education` | `list[Education]` | Degrees and diplomas: `degree`, `field_of_study`, `institution`, `year`, `grade` |
+| `certifications` | `list[str]` | Certifications, licenses, and completed training courses |
+| `achievements` | `list[str]` | Awards, honors, scholarships, and publications |
+| `languages` | `list[str]` | Spoken languages (kept out of `skills`) |
+| `total_experience` | `str \| None` | Total work experience, only when the resume states it (`"5 years"`) |
+| `work_authorization` | `str \| None` | Citizenship, visa status, or security clearance, only when stated |
 
-- `analyzer/extract_resume.py` holds the Mellea `@generative` function and the `extract_resume(text) -> ResumeProfile` wrapper around it:
-  ```python
-  from analyzer.extract_resume import extract_resume
+- `skills`, `experience`, and `education` are the core sections. `profile.missing_sections()` lists the core sections that came back empty, and `profile.is_fully_populated` is true when none did. Everything else is filled only when the resume has it.
+- Every field inside an entry is optional and is `None` when the resume does not state it. Dates, durations, and grades are kept as written (`"May 2021"`, `"Present"`, `"24 months"`, `"3.6 GPA"`).
+- Lists of plain strings are trimmed and de-duplicated ignoring case.
+- Why these fields: the job postings ask for years of experience (35 of 40), certifications or licenses (25 of 40), citizenship (25 of 40), and a degree (22 of 40), so the profile records what a resume says about each.
+- Left out on purpose: name, contact details, date of birth, gender, and marital status. A skills-gap check does not need them, and they should not influence it. Also left out: summary text, links, and hobbies, which no posting requirement is matched against.
 
-  profile = extract_resume(resume_text)
-  ```
-  Every skill it returns appears in the resume text. The check is plain Python in `analyzer/grounding.py` (whole words, ignoring case, spacing, punctuation, and accents), so it does not rely on the model. A skill the resume never mentions is dropped and logged.
+### The extractor
+`analyzer/extract_resume.py` holds the Mellea `@generative` functions and the `extract_resume(text) -> ResumeProfile` wrapper around them:
+```python
+from analyzer.extract_resume import extract_resume
+
+profile = extract_resume(resume_text)
+```
+It reads the resume in focused passes (skills, work history, education, and a few stated facts), because the model mixed sections up when asked for everything at once. Three things are read directly from the text instead of being left to the model:
+- Lines such as `Python - Experience - 24 months` (`analyzer/grounding.py`).
+- A stated total such as `5 years of experience` (`analyzer/grounding.py`).
+- Labelled employers such as `company - Acme Corp` or `Employer: Acme Corp` (`analyzer/layout.py`). Every labelled employer becomes a job, and the model describes each job from that job's own text.
+
+When a resume does not label its employers, a second pass asks the model only for employer names and adds any the work-history pass left out.
+
+### Nothing invented
+Before a profile is returned, `ground_profile` checks it against the resume text in plain Python (`analyzer/grounding.py`), so the result does not rely on the model being honest:
+- A skill, certification, job title, employer, degree, field, school, or project name must appear in the resume as whole words (ignoring case, spacing, punctuation, and accents). If the model only changed a spelling, the resume's wording is restored; otherwise the value is removed.
+- Every word of a date or duration must come from the resume, and a date the resume states once cannot sit on both a school and a job.
+- A description or achievement is removed when fewer than 80% of its words come from the resume.
+- A value must suit its field. A spoken language must be a known one (so `Java` is not a language), an achievement must mention an award, rank, or publication, a grade must look like a grade, and work authorization must mention citizenship, a visa, or a clearance.
+
+Everything removed is logged as a warning.
 
 ### Running it
-Run from the project root. It prints the profile as JSON and exits with status 1 if any section is empty:
+Run from the project root. It prints the profile as JSON and exits with status 1 if a core section is empty:
 ```bash
 uv run python -m analyzer.extract_resume --index 1                       # resume #1 in data/resumes.json
 uv run python -m analyzer.extract_resume --file tests/fixtures/sample_resume.txt
@@ -144,3 +172,23 @@ uv run python -m analyzer.extract_resume --file tests/fixtures/sample_resume.txt
 uv run python -m unittest discover -s tests -t .                         # no model calls
 RUN_LLM_TESTS=1 uv run python -m unittest tests.test_extract_resume      # calls the model
 ```
+
+### How well it does
+Measured on the 166 unique resumes in `data/resumes.json`, using the employers those resumes label (`company - ...`, 372 in all) as the answer key:
+
+| | Employers found | Resumes with every employer found |
+| --- | --- | --- |
+| Model alone, one work-history pass | 286 of 372 (76.9%) | 113 of 166 |
+| With labelled employers read from the text | 370 of 372 (99.5%) | 164 of 166 |
+| Same resumes with the labels removed | 280 of 372 (75.3%) | 108 of 166 |
+
+The two not found in the second row are resumes whose label reads "Na" and "None". The third row is the case of a resume that does not label its employers: there the second, employers-only pass is what lifts recall from 54.8% to 75.3%. No run produced an unreadable answer.
+
+### Known limits
+The default model is small (Granite 4.2, 3B).
+- On a resume that does not label its employers, about one employer in four is still missed.
+- The employers-only pass adds names with no title or description. Most are real employers, but some are clients, courts, or product names that the resume mentions. A job with only an `organization` came from that pass.
+- The model sometimes files a value under the wrong field (a job title as a field of study, for example).
+- Stated total experience and skill durations are only read in the common layouts (`5 years of experience`, `Python - Experience - 24 months`).
+
+The checks above stop the extractor from adding things the resume does not say; they cannot make it find everything.

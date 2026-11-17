@@ -1,5 +1,15 @@
-## Ignore environment variables file
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual environment
+.venv/
+
+# Environment / secrets
 .env
 
-## Ignore MacOs files
+# macOS
 .DS_Store

@@ -101,3 +101,46 @@ The flags are optional and can be combined. A resume must match all of them to b
 | `--max-chars N` | With `--full`, cut each resume off after `N` characters and note how many were left out. Default `0` means no limit. |
 | `--list-categories` | Print each category and its resume count, then exit. |
 
+
+## Resume extraction: `ResumeProfile`
+
+`analyzer/` turns raw resume text into typed data.
+
+- `analyzer/schemas.py` holds the data classes and nothing else, so any group can import them and build test objects by hand:
+  ```python
+  from analyzer import Education, Experience, ResumeProfile
+
+  profile = ResumeProfile(
+      skills=["Python", "SQL"],
+      experience=[Experience(title="Intern", organization="Acme")],
+      education=[Education(degree="B.S.", field_of_study="Computer Science")],
+  )
+  ```
+  | Class | Fields |
+  | --- | --- |
+  | `ResumeProfile` | `skills: list[str]`, `experience: list[Experience]`, `education: list[Education]` |
+  | `Experience` | `title: str`, then optional `organization`, `start`, `end`, `description` |
+  | `Education` | `degree: str`, then optional `field_of_study`, `institution`, `year` |
+
+  Optional fields are `None` when the resume does not state them. Dates are kept as written (`"May 2021"`, `"Present"`). Skills are trimmed and de-duplicated ignoring case. `profile.missing_sections()` lists the sections that came back empty.
+
+- `analyzer/extract_resume.py` holds the Mellea `@generative` function and the `extract_resume(text) -> ResumeProfile` wrapper around it:
+  ```python
+  from analyzer.extract_resume import extract_resume
+
+  profile = extract_resume(resume_text)
+  ```
+  Every skill it returns appears in the resume text. The check is plain Python in `analyzer/grounding.py` (whole words, ignoring case, spacing, punctuation, and accents), so it does not rely on the model. A skill the resume never mentions is dropped and logged.
+
+### Running it
+Run from the project root. It prints the profile as JSON and exits with status 1 if any section is empty:
+```bash
+uv run python -m analyzer.extract_resume --index 1                       # resume #1 in data/resumes.json
+uv run python -m analyzer.extract_resume --file tests/fixtures/sample_resume.txt
+```
+
+### Tests
+```bash
+uv run python -m unittest discover -s tests -t .                         # no model calls
+RUN_LLM_TESTS=1 uv run python -m unittest tests.test_extract_resume      # calls the model
+```

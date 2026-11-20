@@ -192,3 +192,80 @@ The default model is small (Granite 4.2, 3B).
 - Stated total experience and skill durations are only read in the common layouts (`5 years of experience`, `Python - Experience - 24 months`).
 
 The checks above stop the extractor from adding things the resume does not say; they cannot make it find everything.
+
+## Posting extraction: `JobRequirements`
+
+`analyzer/` also turns a job posting into typed data, built the same way as the resume extractor so the two can be compared field by field.
+
+### The data class
+`JobRequirements` lives in `analyzer/schemas.py` next to `ResumeProfile`, so any group can build one by hand:
+```python
+from analyzer import JobRequirements
+
+requirements = JobRequirements(
+    required_skills=["Customer Service", "Active Directory"],
+    qualifications=["installing, configuring, and troubleshooting IT equipment"],
+    work_authorization="U.S. Citizen",
+)
+```
+
+| `JobRequirements` field | Type | What it holds | Compared with `ResumeProfile` |
+| --- | --- | --- | --- |
+| `required_skills` | `list[str]` | Skills, tools, and competencies the posting requires | `skills` |
+| `preferred_skills` | `list[str]` | Skills the posting calls preferred, desired, or a plus | `skills` |
+| `qualifications` | `list[str]` | Required experience or qualification statements, in the posting's words | `experience`, `projects` |
+| `education` | `list[str]` | Required degrees or schooling | `education` |
+| `certifications` | `list[str]` | Required certifications and licenses | `certifications` |
+| `languages` | `list[str]` | Required spoken languages | `languages` |
+| `min_experience` | `str \| None` | Minimum experience, as written (`"one year"`) | `total_experience` |
+| `work_authorization` | `str \| None` | Required citizenship, visa, or clearance (`"U.S. Citizen"`) | `work_authorization` |
+
+- `required_skills` and `qualifications` are the core sections that `missing_sections()` and `is_fully_populated` check. `preferred_skills` is not core: most USAJOBS postings mark nothing as preferred.
+- A skill listed as both required and preferred is kept once, as required, so the match step does not count it twice.
+- Left out on purpose: title, agency, salary, and locations. The posting dict already has them, and none of them is a requirement a resume can meet.
+
+### The extractor
+`analyzer/extract_posting.py` holds the Mellea `@generative` functions and the `extract_requirements(posting) -> JobRequirements` wrapper. It takes a posting dict from `data/postings_*.json` or plain posting text:
+```python
+from analyzer.extract_posting import extract_requirements
+
+requirements = extract_requirements(posting)
+```
+`posting_text()` joins the posting's `summary`, `duties`, `qualifications`, `education`, and `requirements` fields, each with a label. That text is what the model reads and what every value is checked against. The model gets two focused passes (skills, then qualifications, education, certifications, and languages). Three things are read straight from the text in `analyzer/posting_layout.py`, because USAJOBS writes them the same way every time:
+- Citizenship (`You must be a U.S. Citizen ...`), or a security clearance.
+- Minimum experience (`one year of specialized experience ...`). Definitions such as "One year of experience refers to full-time work" are skipped.
+- OPM competencies listed as `Name - definition` in the Qualifications section (`Attention to Detail - Is thorough ...`).
+
+On the 40 saved postings, these readers find citizenship in 22, minimum experience in 29, and a competency list in 12, with no model calls.
+
+### Nothing invented
+`ground_requirements` checks the result against the posting in plain Python, reusing `analyzer/grounding.py`:
+- A skill must appear in the posting as whole words; a label in front of it is trimmed, and a "skill" longer than six words is dropped.
+- Certifications and languages must appear word for word (a changed spelling is restored), and a language must be a known spoken language.
+- A qualification or education entry is removed when fewer than 80% of its words come from the posting. An education entry must name a degree or schooling, so the boilerplate "There is no educational substitution at this grade level" is not kept.
+- Minimum experience and work authorization must come word for word from the posting.
+
+Everything removed is logged as a warning. Pass a list to collect it as well, which is how the baseline comparison (#16) counts invented values. An entry with a reason in parentheses, such as `(a sentence, not a skill)`, was in the posting but in the wrong field; an entry with no reason was not in the posting at all:
+```python
+removed: list[str] = []
+requirements = ground_requirements(requirements, text, removed)
+```
+
+### Running it
+Run from the project root. It prints the requirements as JSON and exits with status 1 if a core section is empty:
+```bash
+uv run python -m analyzer.extract_posting --index 0        # posting #0 in the IT postings file
+uv run python -m analyzer.extract_posting --postings data/postings_construction_miami-fl.json --index 3
+uv run python -m analyzer.extract_posting --file tests/fixtures/sample_posting.json
+```
+
+### Tests
+```bash
+uv run python -m unittest discover -s tests -t .                  # no model calls
+RUN_LLM_TESTS=1 uv run python -m unittest tests.test_extract_posting  # calls the model
+```
+
+### Known limits
+- Three of the 40 saved postings (direct-hire notices) are under 1,000 characters and only link elsewhere, so they cannot come back fully populated.
+- Federal postings describe skills as competencies and duties more than as tool names, so `required_skills` holds phrases such as "Customer Service" that a resume rarely repeats word for word. Matching them is left to the match step.
+- The fixed-wording readers only cover USAJOBS phrasing; postings from other sources rely on the model alone.

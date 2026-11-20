@@ -229,3 +229,84 @@ class ResumeProfile(Schema):
     @property
     def is_fully_populated(self) -> bool:
         return not self.missing_sections()
+
+
+class JobRequirements(Schema):
+    """Structured view of a job posting: what the job asks for.
+
+    `required_skills` and `qualifications` are the core sections every posting is
+    expected to have. Everything else is filled only when the posting states it.
+    The fields pair up with `ResumeProfile` (skills, certifications, education,
+    languages, total_experience, work_authorization) so the match step can compare
+    like with like.
+
+    Left out on purpose: title, agency, salary, and location. The posting dict
+    already has them, and none of them is a requirement a resume can meet.
+    """
+
+    required_skills: list[str] = Field(
+        default_factory=list,
+        description="Skills, tools, technologies, and competencies the posting requires, one per item",
+        json_schema_extra={"maxItems": 40},
+    )
+    preferred_skills: list[str] = Field(
+        default_factory=list,
+        description="Skills the posting lists as preferred, desired, or a plus, one per item",
+        json_schema_extra={"maxItems": 25},
+    )
+    qualifications: list[str] = Field(
+        default_factory=list,
+        description="Required experience or qualification statements, short, in the posting's words",
+        json_schema_extra={"maxItems": 15},
+    )
+    education: list[str] = Field(
+        default_factory=list,
+        description="Required degrees or education, as written",
+        json_schema_extra={"maxItems": 5},
+    )
+    certifications: list[str] = Field(
+        default_factory=list,
+        description="Required certifications or licenses, as written",
+        json_schema_extra={"maxItems": 10},
+    )
+    languages: list[str] = Field(
+        default_factory=list,
+        description="Spoken languages the posting requires, such as Spanish (not programming languages)",
+        json_schema_extra={"maxItems": 5},
+    )
+    min_experience: str | None = Field(
+        default=None,
+        description="Minimum experience the posting requires, as written, e.g. 'one year'",
+    )
+    work_authorization: str | None = Field(
+        default=None,
+        description="Citizenship, visa, or clearance the posting requires, as written",
+    )
+
+    @field_validator("min_experience", "work_authorization", mode="before")
+    @classmethod
+    def _clean_text(cls, value: str | None) -> str | None:
+        return _clean(value)
+
+    @field_validator(
+        "required_skills", "preferred_skills", "qualifications", "education", "certifications", "languages",
+        mode="before",
+    )
+    @classmethod
+    def _clean_string_lists(cls, value: list[str] | None) -> list[str]:
+        return _clean_list(value)
+
+    @model_validator(mode="after")
+    def _required_wins(self) -> JobRequirements:
+        """A skill listed as both required and preferred counts once, as required."""
+        required = {skill.casefold() for skill in self.required_skills}
+        self.preferred_skills = [skill for skill in self.preferred_skills if skill.casefold() not in required]
+        return self
+
+    def missing_sections(self) -> list[str]:
+        """Names of the core sections that came back empty. An empty list means fully populated."""
+        return [name for name in ("required_skills", "qualifications") if not getattr(self, name)]
+
+    @property
+    def is_fully_populated(self) -> bool:
+        return not self.missing_sections()

@@ -269,3 +269,51 @@ RUN_LLM_TESTS=1 uv run python -m unittest tests.test_extract_posting  # calls th
 - Three of the 40 saved postings (direct-hire notices) are under 1,000 characters and only link elsewhere, so they cannot come back fully populated.
 - Federal postings describe skills as competencies and duties more than as tool names, so `required_skills` holds phrases such as "Customer Service" that a resume rarely repeats word for word. Matching them is left to the match step.
 - The fixed-wording readers only cover USAJOBS phrasing; postings from other sources rely on the model alone.
+
+## Match score: `match()`
+
+`analyzer/match.py` compares a `ResumeProfile` against `JobRequirements` and returns a score and the required skills the resume is missing (issue #13).
+
+```python
+from analyzer.match import match
+result = match(resume, job)       # Match(score=60.0, missing=['JavaScript', 'Linux'])
+```
+
+### The data class
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `score` | `float` | Share of `required_skills` found on the resume, 0–100. A posting with no required skills scores 100. |
+| `missing` | `list[str]` | Required skills not found on the resume, in the posting's wording. |
+
+### How skills are matched
+
+1. **Same skill after cleanup.** Both sides go through `analyzer.grounding.normalize`, so case, punctuation, spacing and accents don't matter (`Node.js` = `node js`).
+2. **One inside the other, as whole words.** `Python` matches `Python programming`, and `SQL databases` matches `SQL`. `Java` does **not** match `JavaScript`.
+3. **Optional: synonyms with Mellea** (`use_llm=True`). The skills still missing after steps 1–2 go to the model, which names the resume skill that means the same thing (`JS` for `JavaScript`). Each answer is checked in code: the named skill must really be on the resume, or the match is ignored.
+
+Steps 1–2 are plain Python, so the default score is reproducible and easy to explain.
+
+### Running it
+
+From the project root:
+```bash
+uv run python -m analyzer.match          # hand-made resume + posting, no model needed
+# -> Match score: 60.0%
+# -> Missing: JavaScript
+# -> Missing: Linux
+
+uv run python -m analyzer.match --llm    # adds the synonym step (needs Ollama + Granite)
+# -> Match score: 80.0%
+# -> Missing: Linux
+```
+
+To pass your own session, or to turn on the synonym step from code:
+```python
+match(resume, job, use_llm=True, m=session)
+```
+
+### Known limits
+- Only `required_skills` is scored. `preferred_skills` and `qualifications` are not; qualifications are long sentences ("one year of specialized experience…") that a skill comparison can't judge.
+- The score depends on what the extractors return. Many USAJOBS postings list soft-skill competencies ("Customer Service", "Attention to Detail") that resumes rarely list as skills, so real scores are often low.
+- Whole-word containment can be generous: a resume skill "Management" covers a required "Project management".

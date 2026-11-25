@@ -231,7 +231,7 @@ from analyzer.extract_posting import extract_requirements
 
 requirements = extract_requirements(posting)
 ```
-`posting_text()` joins the posting's `summary`, `duties`, `qualifications`, `education`, and `requirements` fields, each with a label. That text is what the model reads and what every value is checked against. The model gets two focused passes (skills, then qualifications, education, certifications, and languages). Three things are read straight from the text in `analyzer/posting_layout.py`, because USAJOBS writes them the same way every time:
+`posting_text()` joins the posting's `summary`, `duties`, `qualifications`, `education`, and `requirements` fields, each with a label. That text is what the model reads and what every value is checked against. The model gets three focused passes: skills; qualifications, certifications, and languages; and education, which reads only the Qualifications and Education sections (asked about education with the whole posting in front of it, the model found a requirement in 1 of the 21 saved postings that state one; with its own pass it finds one in 18). Three things are read straight from the text in `analyzer/posting_layout.py`, because USAJOBS writes them the same way every time:
 - Citizenship (`You must be a U.S. Citizen ...`), or a security clearance.
 - Minimum experience (`one year of specialized experience ...`). Definitions such as "One year of experience refers to full-time work" are skipped.
 - OPM competencies listed as `Name - definition` in the Qualifications section (`Attention to Detail - Is thorough ...`).

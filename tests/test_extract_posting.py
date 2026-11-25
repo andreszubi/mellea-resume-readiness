@@ -12,7 +12,7 @@ import os
 import unittest
 from pathlib import Path
 
-from analyzer.extract_posting import extract_requirements, main
+from analyzer.extract_posting import _education_text, extract_requirements, main
 from analyzer.grounding import ungrounded
 from analyzer.posting_layout import posting_text
 
@@ -66,6 +66,62 @@ class ConstructionPostingTests(unittest.TestCase):
     def test_every_value_appears_in_the_posting(self) -> None:
         names = [*self.requirements.required_skills, *self.requirements.certifications, *self.requirements.languages]
         self.assertEqual(ungrounded(names, self.text), [])
+
+
+@unittest.skipUnless(RUN_LLM_TESTS, "set RUN_LLM_TESTS=1 to call the model")
+class EducationRequirementTests(unittest.TestCase):
+    """Postings that state a degree. Asked with the whole posting, the model used to return none."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from mellea import start_session
+
+        cls.postings = json.loads(CONSTRUCTION.read_text(encoding="utf-8"))["postings"]
+        cls.session = start_session()
+
+    def education(self, index: int) -> str:
+        return " | ".join(extract_requirements(self.postings[index], self.session).education).casefold()
+
+    def test_finds_the_degree_and_the_semester_hours_alternative(self) -> None:
+        found = self.education(2)  # Contract Specialist
+        self.assertIn("bachelor's degree", found)
+        self.assertIn("24 semester hours", found)
+
+    def test_finds_an_engineering_degree_requirement(self) -> None:
+        self.assertIn("bachelor's degree", self.education(7))  # General Engineer
+
+    def test_every_education_entry_comes_from_the_posting(self) -> None:
+        posting = self.postings[2]
+        text = posting_text(posting).casefold()
+        for entry in extract_requirements(posting, self.session).education:
+            words = [word for word in entry.casefold().replace(",", " ").split() if len(word) > 3]
+            missing = [word for word in words if word.strip(".;:()") not in text]
+            self.assertLess(len(missing), max(2, len(words) // 5), entry)
+
+
+class EducationTextTests(unittest.TestCase):
+    """No model calls: the education pass reads only the sections that state education."""
+
+    def test_keeps_the_qualifications_and_education_sections_only(self) -> None:
+        posting = {
+            "summary": "Join our team.",
+            "duties": ["Manage contracts."],
+            "qualifications": "You must have a bachelor's degree.",
+            "education": "Transcripts are required.",
+            "requirements": "Background check.",
+        }
+        text = _education_text(posting_text(posting))
+        self.assertIn("bachelor's degree", text)
+        self.assertIn("Transcripts are required", text)
+        for elsewhere in ("Join our team", "Manage contracts", "Background check"):
+            self.assertNotIn(elsewhere, text)
+
+    def test_a_posting_with_no_education_section_uses_qualifications_alone(self) -> None:
+        text = _education_text(posting_text({"qualifications": "One year of experience.", "duties": ["Fix things."]}))
+        self.assertEqual(text, "One year of experience.")
+
+    def test_plain_text_with_no_section_labels_is_used_whole(self) -> None:
+        self.assertEqual(_education_text("Must hold a master's degree in statistics."), "Must hold a master's degree in statistics.")
 
 
 class InputTests(unittest.TestCase):

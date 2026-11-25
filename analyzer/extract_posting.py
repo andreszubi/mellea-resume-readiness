@@ -41,6 +41,7 @@ from analyzer.extract_resume import (
 from analyzer.grounding import closest_span, ground, is_grounded, normalize, word_overlap
 from analyzer.posting_layout import (
     posting_text,
+    section,
     stated_competencies,
     stated_min_experience,
     stated_work_authorization,
@@ -62,13 +63,18 @@ _EDUCATION = re.compile(
 )
 _NO_EDUCATION = re.compile(r"\bno[ \t]+educational[ \t]+substitution\b|\bnot[ \t]+required\b", re.IGNORECASE)
 
-# The posting is read in two focused passes, as in extract_resume: asked for
-# everything at once, a small model mixes sections up.
+# The posting is read in focused passes, as in extract_resume: asked for
+# everything at once, a small model mixes sections up. Education gets a pass of
+# its own, over only the sections that state it.
 
 
 class _SkillsSection(Schema):
     required_skills: list[str] = Field(default_factory=list, json_schema_extra={"maxItems": 40})
     preferred_skills: list[str] = Field(default_factory=list, json_schema_extra={"maxItems": 25})
+
+
+class _EducationSection(Schema):
+    education: list[str] = Field(default_factory=list, json_schema_extra={"maxItems": 5})
 
 
 class _QualificationsSection(Schema):
@@ -120,6 +126,33 @@ def extract_posting_qualifications(posting_text: str) -> _QualificationsSection:
     """
 
 
+@generative
+def extract_posting_education(posting_text: str) -> _EducationSection:
+    """List the education the job posting asks for.
+
+    Copy from the posting. Never add anything that is not written there.
+
+    education: each degree, diploma, or amount of schooling an applicant must
+    have or may use to qualify, such as a bachelor's degree in a named field,
+    a master's degree, or a number of semester hours. One per item, a short
+    phrase in the posting's own words. Leave out rules about transcripts,
+    accreditation, and foreign education: they are not requirements a degree
+    meets. Use an empty list if the posting names no degree or schooling.
+    """
+
+
+def _education_text(text: str) -> str:
+    """The parts of a posting that state education: its Qualifications and Education sections.
+
+    Asked about education with the whole posting in front of it, the model
+    returned nothing for 20 of the 21 saved postings that name a degree.
+    """
+    parts = [section(text, "Qualifications")]
+    if "\nEducation:\n" in f"\n{text}":
+        parts.append(section(text, "Education"))
+    return "\n\n".join(part.strip() for part in parts if part.strip())
+
+
 def _source_text(posting: dict | str) -> str:
     if isinstance(posting, dict):
         return posting_text(posting)
@@ -142,6 +175,7 @@ def extract_requirements(posting: dict | str, m: MelleaSession | None = None) ->
     try:
         skills = extract_posting_skills(session, posting_text=text, model_options=MODEL_OPTIONS)
         quals = extract_posting_qualifications(session, posting_text=text, model_options=MODEL_OPTIONS)
+        schooling = extract_posting_education(session, posting_text=_education_text(text), model_options=MODEL_OPTIONS)
     except ValidationError as e:
         # Usually the answer was cut off at the token cap, leaving incomplete JSON.
         raise ExtractionError(f"model returned an unreadable answer: {e.errors()[0]['msg']}") from e
@@ -152,7 +186,7 @@ def extract_requirements(posting: dict | str, m: MelleaSession | None = None) ->
         required_skills=[*stated_competencies(text), *skills.required_skills],
         preferred_skills=skills.preferred_skills,
         qualifications=quals.qualifications,
-        education=quals.education,
+        education=[*schooling.education, *quals.education],
         certifications=quals.certifications,
         languages=quals.languages,
         # Fixed wording, read from the text rather than asked of the model.

@@ -81,6 +81,13 @@ class StatedSkillDurationTests(unittest.TestCase):
             ["Basic Computer", "Electrical Machine", "Electrical wiring", "Solar power Plant", "Distribution Substation"],
         )
 
+    def test_a_full_stop_after_the_skill_is_not_part_of_its_name(self) -> None:
+        line = "Firewall and VPN Configuration, Routing and Switching.- Exprience - 24 months"
+        self.assertEqual(
+            stated_skill_durations(line),
+            [("Firewall and VPN Configuration", "24 months"), ("Routing and Switching", "24 months")],
+        )
+
     def test_stops_at_the_duration_when_the_next_heading_is_glued_on(self) -> None:
         # The sample resumes run the last duration into the next heading.
         self.assertEqual(stated_skill_durations("SQL- Exprience - 6 monthsCompany Details"), [("SQL", "6 months")])

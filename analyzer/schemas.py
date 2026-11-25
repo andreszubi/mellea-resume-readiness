@@ -108,14 +108,28 @@ class SkillExperience(Schema):
         return _clean(value)
 
 
+def _list_key(value: str) -> str:
+    """What two entries are compared on: letters and digits only, so "Node.js" equals "node js"."""
+    return " ".join(re.findall(r"[a-z0-9+#]+", value.casefold()))
+
+
 def _clean_list(values: list[str] | None) -> list[str]:
-    """Trim each entry and drop blanks, placeholders, and repeats (case-insensitive), keeping the first spelling."""
+    """Tidy a list of names: trim each entry, drop blanks, placeholders, and repeats.
+
+    Punctuation left hanging on the end of an entry ("SQL," or "Routing and Switching.")
+    is removed. Two entries are repeats when they differ only in case, spacing, or
+    punctuation; the first spelling is kept.
+    """
     seen: set[str] = set()
     cleaned: list[str] = []
     for raw in values or []:
         value = _clean(raw)
-        if value and value.casefold() not in seen:
-            seen.add(value.casefold())
+        if value:
+            # A leading "." is kept for names like ".NET"; "+" and "#" for "C++" and "C#".
+            value = _clean(value.rstrip(".,;:").lstrip(",;:"))
+        key = _list_key(value) if value else ""
+        if value and key and key not in seen:
+            seen.add(key)
             cleaned.append(value)
     return cleaned
 

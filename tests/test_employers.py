@@ -94,6 +94,22 @@ class AddMissedEmployersTests(unittest.TestCase):
         self.assertEqual(len(jobs), 1)
 
 
+class SkillNameTests(unittest.TestCase):
+    def test_the_label_after_a_skill_is_removed(self) -> None:
+        for written, name in [
+            ("Python- Exprience", "Python"),
+            ("Machine learning - Experience - 24 months", "Machine learning"),
+            ("SQL: Experience", "SQL"),
+            ("Python", "Python"),
+            ("User Experience Design", "User Experience Design"),
+        ]:
+            self.assertEqual(module._skill_name(written), name, written)
+
+    def test_nothing_left_means_no_skill(self) -> None:
+        self.assertIsNone(module._skill_name("- Experience"))
+        self.assertIsNone(module._skill_name(None))
+
+
 class SameEmployerTests(unittest.TestCase):
     def test_matches_the_same_name_written_differently(self) -> None:
         for a, b in [("Acme", "Acme Corp, Pune"), ("Wab It Software", "Wab It Softwere"), ("AT&T", "at&t")]:

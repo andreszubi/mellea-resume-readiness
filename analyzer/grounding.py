@@ -91,7 +91,7 @@ def stated_skill_durations(source: str) -> list[tuple[str, str]]:
     for match in _SKILL_DURATION.finditer(source):
         duration = " ".join(match["duration"].split())
         for skill in match["skill"].split(","):
-            skill = re.sub(r"^and\s+", "", skill.strip(" \t;:-"), flags=re.IGNORECASE)
+            skill = re.sub(r"^and\s+", "", skill.strip(" \t;:-").rstrip("."), flags=re.IGNORECASE)
             if skill:
                 pairs.append((skill, duration))
     return pairs

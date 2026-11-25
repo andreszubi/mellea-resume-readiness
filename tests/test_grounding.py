@@ -40,6 +40,25 @@ class GroundingTests(unittest.TestCase):
     def test_ground_strips_a_leading_category_label(self) -> None:
         self.assertEqual(ground("Version control MySQL", RESUME), "MySQL")
 
+    def test_ground_drops_at_most_a_two_word_label(self) -> None:
+        self.assertEqual(ground("Network Protocols MySQL", RESUME), "MySQL")
+        self.assertIsNone(ground("Experience with relational systems like MySQL", RESUME))
+
+    def test_ground_does_not_cut_a_made_up_phrase_down_to_a_lone_ordinary_word(self) -> None:
+        text = "Applies standards for airport design. Experience in management of contracts and planning."
+        for made_up in ("HUD standards", "database management", "innovation planning", "regional airport safety standards"):
+            self.assertIsNone(ground(made_up, text), made_up)
+
+    def test_ground_keeps_a_remainder_that_is_still_a_name(self) -> None:
+        text = "Applies standards for airport design. Follows FAA rules. Leads acquisition lifecycle reviews."
+        self.assertEqual(ground("regional airport design", text), "airport design")
+        self.assertEqual(ground("regional FAA", text), "FAA")
+        self.assertEqual(ground("leadership in acquisition lifecycle", text), "acquisition lifecycle")
+
+    def test_ground_does_not_keep_a_remainder_that_starts_mid_phrase(self) -> None:
+        text = "The worker checks tools and looks for obvious flaws in materials."
+        self.assertIsNone(ground("checks items for obvious flaws", text))
+
     def test_ground_returns_none_when_nothing_matches(self) -> None:
         self.assertIsNone(ground("Python", RESUME))
         self.assertIsNone(ground("", RESUME))

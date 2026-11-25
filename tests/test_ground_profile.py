@@ -146,6 +146,12 @@ class GroundProfileTests(unittest.TestCase):
         self.assertEqual(grounded.languages, ["English", "Hindi"])
         self.assertEqual(grounded.skills, ["Python"])
 
+    def test_a_job_title_is_not_also_a_skill(self) -> None:
+        profile = ResumeProfile(
+            skills=["Python", "Jr. Analyst"], experience=[Experience(title="Jr. Analyst", organization="Acme Corp")]
+        )
+        self.assertEqual(ground_profile(profile, RESUME).skills, ["Python"])
+
     def test_a_programming_language_is_not_a_spoken_language(self) -> None:
         # "Python" and "Oracle" are in the resume, but nobody speaks them.
         profile = ResumeProfile(languages=["English", "Python", "Oracle"])

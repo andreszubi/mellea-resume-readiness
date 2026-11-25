@@ -42,16 +42,44 @@ def ungrounded(items: list[str], source: str) -> list[str]:
     return [item for item in items if not normalize(item).strip() or normalize(item) not in haystack]
 
 
+# How many leading words `ground` may drop as a category label.
+MAX_LABEL_WORDS = 2
+
+# Words a name does not start with. A remainder that starts with one is a fragment.
+_JOINING_WORDS = {"a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to", "with"}
+
+
+def _is_name(text: str) -> bool:
+    """True if `text` can stand as a name on its own once a label is dropped from it.
+
+    Two or more words can ("project management"). One word can only if it is written
+    like a name, with a capital, a digit, or a symbol ("MySQL", "HTTP", "C#"). A lone
+    ordinary word ("management", "standards") says nothing by itself.
+    """
+    words = text.split()
+    if not words or words[0].casefold().strip("(") in _JOINING_WORDS:
+        return False
+    return len(words) > 1 or not text.islower()
+
+
 def ground(item: str, source: str) -> str | None:
-    """Return `item` if it appears in `source`, else its longest ending that does, else None.
+    """Return `item` if it appears in `source`, else the part after a leading label if that does, else None.
 
     The model sometimes puts a category label in front of a real entry, turning the
-    resume line "Database: MySQL" into the skill "Database MySQL". Dropping leading
-    words recovers "MySQL" instead of losing the skill.
+    line "Database: MySQL" into the skill "Database MySQL". Dropping the label
+    recovers "MySQL" instead of losing the skill.
+
+    Only a label is dropped: at most `MAX_LABEL_WORDS` words, and what is left must
+    still be a name. A phrase the model put together itself is not rescued by
+    cutting it down to its last word. "database management" is not turned into
+    "management" when the source never says "database management"; it is reported
+    as not found.
     """
     words = item.split()
-    for start in range(len(words)):
+    for start in range(min(len(words), MAX_LABEL_WORDS + 1)):
         candidate = " ".join(words[start:])
+        if start and not _is_name(candidate):
+            continue
         if is_grounded(candidate, source):
             return candidate
     return None
@@ -91,7 +119,7 @@ def stated_skill_durations(source: str) -> list[tuple[str, str]]:
     for match in _SKILL_DURATION.finditer(source):
         duration = " ".join(match["duration"].split())
         for skill in match["skill"].split(","):
-            skill = re.sub(r"^and\s+", "", skill.strip(" \t;:-"), flags=re.IGNORECASE)
+            skill = re.sub(r"^and\s+", "", skill.strip(" \t;:-").rstrip("."), flags=re.IGNORECASE)
             if skill:
                 pairs.append((skill, duration))
     return pairs

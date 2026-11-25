@@ -107,6 +107,9 @@ _WORK_AUTHORIZATION = re.compile(
     re.IGNORECASE,
 )
 
+# The "- Experience" that follows a skill on lines like "Python - Experience - 24 months".
+_EXPERIENCE_LABEL = re.compile(r"\s*[-–:]\s*exp[a-z]*ence\b.*$", re.IGNORECASE)
+
 # Section headings the model sometimes returns as a job title.
 _HEADINGS = {
     "roles and responsibilities",
@@ -166,9 +169,12 @@ def extract_skills(resume_text: str) -> _SkillsSection:
 
     Copy from the resume. Never add a skill that is not written there.
 
-    - skills: every skill, tool, programming language, framework, and
-      technology the resume names, anywhere in it. One skill per item, a few
-      words at most, spelled as in the resume. Split lists apart: the line
+    - skills: every skill the resume names, anywhere in it. That means
+      technical skills (tools, programming languages, frameworks,
+      technologies) and also personal and professional skills the resume
+      names as skills, such as a heading or list entry for communication,
+      teamwork, or leadership. One skill per item, a few words at most,
+      spelled as in the resume. Split lists apart: the line
       "Tools: Alpha, Beta, Gamma" becomes "Alpha", "Beta", "Gamma". Never
       repeat a skill. Do not include category labels, sentences, job titles,
       or durations.
@@ -297,11 +303,15 @@ def extract_resume(text: str, m: MelleaSession | None = None) -> ResumeProfile:
     # text; the model's own list only adds skills that this did not find.
     durations = [SkillExperience(skill=skill, duration=duration) for skill, duration in stated_skill_durations(text)]
     found = {normalize(item.skill) for item in durations}
-    durations += [item for item in skills.skill_experience if item.skill and normalize(item.skill) not in found]
+    for item in skills.skill_experience:
+        name = _skill_name(item.skill)
+        if name and normalize(name) not in found:
+            found.add(normalize(name))
+            durations.append(SkillExperience(skill=name, duration=item.duration))
 
     profile = ResumeProfile(
         # A skill the resume gives a duration for is a skill, even if the model's list missed it.
-        skills=[*skills.skills, *(item.skill for item in durations if item.skill)],
+        skills=[*(_skill_name(skill) or "" for skill in skills.skills), *(item.skill for item in durations if item.skill)],
         skill_experience=durations,
         experience=jobs,
         projects=work.projects,
@@ -314,6 +324,17 @@ def extract_resume(text: str, m: MelleaSession | None = None) -> ResumeProfile:
         work_authorization=overview.work_authorization,
     )
     return ground_profile(profile, text)
+
+
+def _skill_name(skill: str | None) -> str | None:
+    """A skill's name without the label that follows it on the page.
+
+    The model sometimes copies part of the line along with the skill, returning
+    "Python- Exprience" for the line "Python- Exprience - 24 months".
+    """
+    if not skill:
+        return None
+    return _EXPERIENCE_LABEL.sub("", skill).strip() or None
 
 
 def _same_employer(a: str | None, b: str | None) -> bool:
@@ -445,6 +466,7 @@ def ground_profile(profile: ResumeProfile, text: str) -> ResumeProfile:
 
     - A date the resume states only once is not allowed on both a school and a job;
       the job loses it.
+    - A job title the resume gives a job is not also listed as a skill.
     - A value must suit its field: a spoken language must be a known one, an
       achievement must mention an award, rank, or publication, a grade must look
       like one, and work authorization must mention citizenship, a visa, or a
@@ -546,9 +568,11 @@ def ground_profile(profile: ResumeProfile, text: str) -> ResumeProfile:
             loose(profile.work_authorization, "work authorization"), _WORK_AUTHORIZATION, "work authorization"
         ),
     }
-    # A spoken language belongs under languages, not skills.
+    # A spoken language belongs under languages, not skills, and a job title is not a skill.
     spoken = {normalize(name) for name in data["languages"]}
-    data["skills"] = [skill for skill in data["skills"] if normalize(skill) not in spoken]
+    titles = {normalize(job["title"]) for job in data["experience"] if job["title"]}
+    removed.extend(f"skill {skill!r} (a job title)" for skill in data["skills"] if normalize(skill) in titles)
+    data["skills"] = [skill for skill in data["skills"] if normalize(skill) not in spoken | titles]
 
     # A date the resume states once cannot belong to both a school and a job. The
     # model sometimes copies an education date onto a job, so the job loses it.

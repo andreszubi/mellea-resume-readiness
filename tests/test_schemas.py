@@ -42,6 +42,21 @@ class ResumeProfileTests(unittest.TestCase):
         profile = ResumeProfile(skills=["  Python ", "python", "SQL", "", "   ", "Machine   Learning", "SQL"])
         self.assertEqual(profile.skills, ["Python", "SQL", "Machine Learning"])
 
+    def test_punctuation_left_on_the_end_of_a_skill_is_removed(self) -> None:
+        profile = ResumeProfile(skills=["Routing and Switching.", "SQL,", "; Git", "Teamwork:"])
+        self.assertEqual(profile.skills, ["Routing and Switching", "SQL", "Git", "Teamwork"])
+
+    def test_skills_that_differ_only_in_punctuation_are_repeats(self) -> None:
+        profile = ResumeProfile(skills=["Routing and Switching", "Routing and Switching.", "Node.js", "node js", "SQL", "sql,"])
+        self.assertEqual(profile.skills, ["Routing and Switching", "Node.js", "SQL"])
+
+    def test_punctuation_that_is_part_of_a_name_is_kept(self) -> None:
+        profile = ResumeProfile(skills=["C++", "C", "C#", ".NET", "Node.js", "CI/CD", "ASP.NET"])
+        self.assertEqual(profile.skills, ["C++", "C", "C#", ".NET", "Node.js", "CI/CD", "ASP.NET"])
+
+    def test_an_entry_that_is_only_punctuation_is_dropped(self) -> None:
+        self.assertEqual(ResumeProfile(skills=["...", "-", "Python"]).skills, ["Python"])
+
     def test_certifications_are_cleaned_like_skills(self) -> None:
         profile = ResumeProfile(certifications=["PMP", " pmp ", "N/A", "CompTIA Security+"])
         self.assertEqual(profile.certifications, ["PMP", "CompTIA Security+"])
